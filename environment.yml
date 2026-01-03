@@ -1,0 +1,35 @@
+name: imitation-learning
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - pytorch>=2.0.0
+  - pytorch-cuda=12.1
+  
+  # FFmpeg for video decoding (required by torchcodec, version 7 max - v8 not yet supported)
+  - ffmpeg>=7,<8
+  
+  # Core dependencies
+  - numpy>=1.24.0
+  - pillow>=10.0.0
+  - tqdm>=4.65.0
+  - pyyaml>=6.0
+  
+  # Development tools
+  - black>=24.1.0
+  - isort>=5.13.0
+  - flake8>=7.0.0
+  - pytest>=7.4.0
+  - pytest-cov>=4.1.0
+  - mypy>=1.8.0
+  
+  # Pip dependencies
+  - pip
+  - pip:
+    - lerobot>=0.1.0
+    - pre-commit>=3.6.0
+
