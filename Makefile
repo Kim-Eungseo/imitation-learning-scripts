@@ -1,4 +1,4 @@
-.PHONY: setup format lint check train clean clean-env update-env info help
+.PHONY: setup format lint check train train-diffusion train-act train-tdmpc clean clean-env update-env info help
 
 # Default target
 help:
@@ -8,8 +8,13 @@ help:
 	@echo "    make setup        - Create conda environment and setup pre-commit"
 	@echo "    make update-env   - Update conda environment"
 	@echo ""
+	@echo "  Training:"
+	@echo "    make train        - Train with Diffusion Policy (default)"
+	@echo "    make train-diffusion - Train with Diffusion Policy"
+	@echo "    make train-act    - Train with ACT (Action Chunking Transformer)"
+	@echo "    make train-tdmpc  - Train with TDMPC"
+	@echo ""
 	@echo "  Development:"
-	@echo "    make train        - Start training"
 	@echo "    make format       - Format code with black and isort"
 	@echo "    make lint         - Run flake8 linter"
 	@echo "    make check        - Format and lint"
@@ -20,6 +25,11 @@ help:
 	@echo ""
 	@echo "  Info:"
 	@echo "    make info         - Show environment information"
+	@echo ""
+	@echo "  Examples:"
+	@echo "    python train.py --policy act --training_steps 10000"
+	@echo "    python train.py --policy tdmpc --batch_size 32"
+	@echo "    python train.py --help  # Show all options"
 
 # Conda environment setup
 setup:
@@ -53,10 +63,22 @@ lint:
 # Check code quality (format + lint)
 check: format lint
 
-# Train model
-train:
-	@echo "🚀 Starting training..."
-	@python train.py
+# Train with Diffusion Policy (default)
+train: train-diffusion
+
+train-diffusion:
+	@echo "🚀 Starting Diffusion Policy training..."
+	@python train.py --policy diffusion
+
+# Train with ACT
+train-act:
+	@echo "🚀 Starting ACT training..."
+	@python train.py --policy act
+
+# Train with TDMPC
+train-tdmpc:
+	@echo "🚀 Starting TDMPC training..."
+	@python train.py --policy tdmpc
 
 # Clean outputs
 clean:
@@ -86,3 +108,5 @@ info:
 	@echo ""
 	@which python 2>/dev/null && python --version || echo "Python not found"
 	@which conda 2>/dev/null && conda --version || echo "Conda not found"
+	@echo ""
+	@echo "Supported policies: diffusion, act, tdmpc"

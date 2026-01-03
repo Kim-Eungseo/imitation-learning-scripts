@@ -12,87 +12,163 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""This script demonstrates how to train Diffusion Policy on the PushT environment."""
+"""Training script for multiple policies (Diffusion, ACT, TDMPC) using draccus."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
+import draccus  # noqa: F401
 import torch
 
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
 
-def main():
-    # Create a directory to store the training checkpoint.
-    output_directory = Path("outputs/train/example_pusht_diffusion")
+SUPPORTED_POLICIES = ["diffusion", "act", "tdmpc"]
+
+
+@dataclass
+class TrainConfig:
+    """Training configuration."""
+
+    # Policy selection: diffusion, act, tdmpc
+    policy: str = "diffusion"
+
+    # Dataset
+    dataset_name: str = "lerobot/pusht"
+
+    # Training parameters
+    training_steps: int = 5000
+    batch_size: int = 64
+    learning_rate: float = 1e-4
+    num_workers: int = 4
+    log_freq: int = 1
+
+    # Output
+    output_dir: str = "outputs/train"
+
+    # Device
+    device: str = "cuda"
+
+
+def get_policy_and_config(
+    policy_type: str,
+    input_features: dict,
+    output_features: dict,
+):
+    """Create policy configuration and model based on policy type."""
+    if policy_type == "diffusion":
+        from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+
+        cfg = DiffusionConfig(input_features=input_features, output_features=output_features)
+        policy = DiffusionPolicy(cfg)
+
+    elif policy_type == "act":
+        from lerobot.policies.act.configuration_act import ACTConfig
+        from lerobot.policies.act.modeling_act import ACTPolicy
+
+        cfg = ACTConfig(input_features=input_features, output_features=output_features)
+        policy = ACTPolicy(cfg)
+
+    elif policy_type == "tdmpc":
+        from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+        from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
+
+        cfg = TDMPCConfig(input_features=input_features, output_features=output_features)
+        policy = TDMPCPolicy(cfg)
+
+    else:
+        raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {SUPPORTED_POLICIES}")
+
+    return cfg, policy
+
+
+def get_delta_timestamps(cfg, dataset_metadata):
+    """Get delta timestamps based on policy configuration.
+
+    This follows lerobot's resolve_delta_timestamps logic:
+    - Only set delta_timestamps for features that have corresponding delta_indices
+    - If delta_indices is None, don't include that feature (no temporal dimension)
+    """
+    delta_timestamps = {}
+
+    # Observation timestamps - only set if observation_delta_indices is not None
+    if cfg.observation_delta_indices is not None:
+        obs_timestamps = [i / dataset_metadata.fps for i in cfg.observation_delta_indices]
+        # Set for all observation features in the dataset
+        for key in dataset_metadata.features:
+            if key.startswith("observation."):
+                delta_timestamps[key] = obs_timestamps
+
+    # Action timestamps
+    if cfg.action_delta_indices is not None:
+        delta_timestamps["action"] = [i / dataset_metadata.fps for i in cfg.action_delta_indices]
+
+    # Reward timestamps (for TDMPC)
+    if hasattr(cfg, "reward_delta_indices") and cfg.reward_delta_indices is not None:
+        delta_timestamps["next.reward"] = [i / dataset_metadata.fps for i in cfg.reward_delta_indices]
+
+    # Return None if empty (lerobot convention)
+    return delta_timestamps if delta_timestamps else None
+
+
+@draccus.wrap()
+def main(cfg: TrainConfig):
+    print(f"Training with policy: {cfg.policy}")
+    print(f"Dataset: {cfg.dataset_name}")
+    print(f"Training steps: {cfg.training_steps}")
+    print(f"Batch size: {cfg.batch_size}")
+    print(f"Learning rate: {cfg.learning_rate}")
+    print("-" * 50)
+
+    # Create output directory
+    output_directory = Path(cfg.output_dir) / f"{cfg.dataset_name.replace('/', '_')}_{cfg.policy}"
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    # # Select your device
-    device = torch.device("cuda")
+    # Select device
+    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-    # Number of offline training steps (we'll only do offline training for this example.)
-    # Adjust as you prefer. 5000 steps are needed to get something worth evaluating.
-    training_steps = 5000
-    log_freq = 1
-
-    # When starting from scratch (i.e. not from a pretrained policy), we need to specify 2 things before
-    # creating the policy:
-    #   - input/output shapes: to properly size the policy
-    #   - dataset stats: for normalization and denormalization of input/outputs
-    dataset_metadata = LeRobotDatasetMetadata("lerobot/pusht")
+    # Load dataset metadata for policy configuration
+    dataset_metadata = LeRobotDatasetMetadata(cfg.dataset_name)
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     input_features = {key: ft for key, ft in features.items() if key not in output_features}
 
-    # Policies are initialized with a configuration class, in this case `DiffusionConfig`. For this example,
-    # we'll just use the defaults and so no arguments other than input/output features need to be passed.
-    cfg = DiffusionConfig(input_features=input_features, output_features=output_features)
-
-    # We can now instantiate our policy with this config and the dataset stats.
-    policy = DiffusionPolicy(cfg)
+    # Create policy and configuration
+    policy_cfg, policy = get_policy_and_config(
+        cfg.policy,
+        input_features=input_features,
+        output_features=output_features,
+    )
     policy.train()
     policy.to(device)
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_metadata.stats)
 
-    # Another policy-dataset interaction is with the delta_timestamps. Each policy expects a given number frames
-    # which can differ for inputs, outputs and rewards (if there are some).
-    delta_timestamps = {
-        "observation.image": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
-        "observation.state": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
-        "action": [i / dataset_metadata.fps for i in cfg.action_delta_indices],
-    }
+    # Create preprocessor and postprocessor
+    preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
 
-    # In this case with the standard configuration for Diffusion Policy, it is equivalent to this:
-    delta_timestamps = {
-        # Load the previous image and state at -0.1 seconds before current frame,
-        # then load current image and state corresponding to 0.0 second.
-        "observation.image": [-0.1, 0.0],
-        "observation.state": [-0.1, 0.0],
-        # Load the previous action (-0.1), the next action to be executed (0.0),
-        # and 14 future actions with a 0.1 seconds spacing. All these actions will be
-        # used to supervise the policy.
-        "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
-    }
+    # Get delta timestamps for the dataset
+    delta_timestamps = get_delta_timestamps(policy_cfg, dataset_metadata)
+    print(f"Delta timestamps: {delta_timestamps}")
 
-    # We can then instantiate the dataset with these delta_timestamps configuration.
-    dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
+    # Create dataset
+    dataset = LeRobotDataset(cfg.dataset_name, delta_timestamps=delta_timestamps)
 
-    # Then we create our optimizer and dataloader for offline training.
-    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
+    # Create optimizer and dataloader
+    optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.learning_rate)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
-        batch_size=64,
+        num_workers=cfg.num_workers,
+        batch_size=cfg.batch_size,
         shuffle=True,
         pin_memory=device.type != "cpu",
         drop_last=True,
     )
 
-    # Run training loop.
+    # Training loop
     step = 0
     done = False
     while not done:
@@ -103,18 +179,20 @@ def main():
             optimizer.step()
             optimizer.zero_grad()
 
-            if step % log_freq == 0:
+            if step % cfg.log_freq == 0:
                 print(f"step: {step} loss: {loss.item():.3f}")
             step += 1
-            if step >= training_steps:
+            if step >= cfg.training_steps:
                 done = True
                 break
 
-    # Save a policy checkpoint.
+    # Save checkpoint
+    print(f"Saving model to {output_directory}")
     policy.save_pretrained(output_directory)
     preprocessor.save_pretrained(output_directory)
     postprocessor.save_pretrained(output_directory)
+    print("Training completed!")
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]
