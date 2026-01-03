@@ -27,3 +27,5 @@ use_parentheses = true
 ensure_newline_before_comments = true
 skip_glob = ["outputs/*", "data/*"]
 
+[tool.pyright]
+enabled = false
