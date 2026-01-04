@@ -1,4 +1,4 @@
-.PHONY: setup format lint check train train-diffusion train-act train-tdmpc clean clean-env update-env info help
+.PHONY: setup format lint check train train-diffusion train-act train-tdmpc eval eval-render clean clean-env update-env update-pip info help
 
 # Default target
 help:
@@ -6,13 +6,18 @@ help:
 	@echo ""
 	@echo "  Setup:"
 	@echo "    make setup        - Create conda environment and setup pre-commit"
-	@echo "    make update-env   - Update conda environment"
+	@echo "    make update-env   - Update conda environment (full)"
+	@echo "    make update-pip   - Update pip dependencies only (fast)"
 	@echo ""
 	@echo "  Training:"
 	@echo "    make train        - Train with Diffusion Policy (default)"
 	@echo "    make train-diffusion - Train with Diffusion Policy"
 	@echo "    make train-act    - Train with ACT (Action Chunking Transformer)"
 	@echo "    make train-tdmpc  - Train with TDMPC"
+	@echo ""
+	@echo "  Evaluation:"
+	@echo "    make eval         - Evaluate trained model"
+	@echo "    make eval-render  - Evaluate with visualization"
 	@echo ""
 	@echo "  Development:"
 	@echo "    make format       - Format code with black and isort"
@@ -29,6 +34,8 @@ help:
 	@echo "  Examples:"
 	@echo "    python train.py --policy act --training_steps 10000"
 	@echo "    python train.py --policy tdmpc --batch_size 32"
+	@echo "    python eval.py --pretrained_path outputs/train/lerobot_pusht_diffusion"
+	@echo "    python eval.py --n_episodes 20 --render"
 	@echo "    python train.py --help  # Show all options"
 
 # Conda environment setup
@@ -40,11 +47,17 @@ setup:
 	@echo "   1. conda activate imitation-learning"
 	@echo "   2. pre-commit install  (optional, for git hooks)"
 
-# Update conda environment
+# Update conda environment (full)
 update-env:
 	@echo "🔄 Updating conda environment..."
 	@conda env update -f environment.yml --prune
 	@echo "✅ Environment updated!"
+
+# Update pip dependencies only (fast)
+update-pip:
+	@echo "📦 Updating pip dependencies..."
+	@pip install -U lerobot pre-commit gym-pusht
+	@echo "✅ Pip dependencies updated!"
 
 # Code formatting
 format:
@@ -79,6 +92,16 @@ train-act:
 train-tdmpc:
 	@echo "🚀 Starting TDMPC training..."
 	@python train.py --policy tdmpc
+
+# Evaluate trained model
+eval:
+	@echo "📊 Evaluating trained model..."
+	@python eval.py
+
+# Evaluate with visualization
+eval-render:
+	@echo "📊 Evaluating with visualization..."
+	@python eval.py --render
 
 # Clean outputs
 clean:
